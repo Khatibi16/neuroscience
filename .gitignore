@@ -1,5 +1,13 @@
+# Data files
+*.h5
+data/
+
 # macOS
 .DS_Store
+
+# Large data files
+microns.h5
+tutorial_microns.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -220,4 +228,3 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-*.h5
