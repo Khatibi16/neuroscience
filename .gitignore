@@ -1,3 +1,7 @@
+# Data files
+*.h5
+data/
+
 # macOS
 .DS_Store
 
@@ -219,3 +223,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
