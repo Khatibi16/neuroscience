@@ -5,6 +5,10 @@ data/
 # macOS
 .DS_Store
 
+# Large data files
+microns.h5
+tutorial_microns.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
