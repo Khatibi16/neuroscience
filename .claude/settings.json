@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/Users/omarjallouq/Developer/Neuroscience Project/.venv/bin/python3\" -m pip install scikit-learn)",
+      "Bash(\"/Users/omarjallouq/Developer/Neuroscience Project/.venv/bin/python3\" -m pip install cebra)"
+    ]
+  }
+}
