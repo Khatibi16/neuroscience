@@ -1,0 +1,1129 @@
+=== CELL 27 (code) ===
+sil_scores = {}
+for name, emb in methods:
+    sil_scores[name] = silhouette_score(emb, y)
+for k in [2, 5, 10, 20, 50]:
+    if k < R_pca.shape[1]:
+        sil_scores[f'PCA-{k}D'] = silhouette_score(R_pca[:, :k], y)
+
+n_pca_bal = min(50, len(bal_idx) - 1)
+pca_bal = PCA(n_components=n_pca_bal, random_state=SEED)
+RB_pca = pca_bal.fit_transform(R_bal)
+
+perp_bal = max(5, min(15, len(bal_idx) // 5))
+tsne_bal = TSNE(n_components=2, perplexity=perp_bal, random_state=SEED,
+                max_iter=1000, learning_rate='auto', init='pca')
+RB_tsne = tsne_bal.fit_transform(RB_pca[:, :min(20, n_pca_bal)])
+
+RB_umap = None
+if UMAP_AVAILABLE:
+    nn_bal  = max(5, min(10, len(bal_idx) // 6))
+    umap_bal = umap.UMAP(n_components=2, n_neighbors=nn_bal, min_dist=0.1,
+                         random_state=SEED)
+    RB_umap = umap_bal.fit_transform(RB_pca[:, :min(20, n_pca_bal)])
+
+sil_bal = {}
+sil_bal['PCA (balanced)']   = silhouette_score(RB_pca[:, :2], y_bal)
+sil_bal['t-SNE (balanced)'] = silhouette_score(RB_tsne, y_bal)
+if RB_umap is not None:
+    sil_bal['UMAP (balanced)'] = silhouette_score(RB_umap, y_bal)
+
+print("Silhouette — FULL dataset")
+for name, sc in sorted(sil_scores.items(), key=lambda x: -x[1]):
+    print(f"{name:25s}  {sc:+.4f}")
+print("\nSilhouette — BALANCED subsample")
+for name, sc in sorted(sil_bal.items(), key=lambda x: -x[1]):
+    print(f"{name:25s}  {sc:+.4f}")
+
+=== CELL 28 (code) ===
+clf_scores     = {}
+clf_scores_bal = {}
+clf_scores_f1  = {}
+
+for name, emb in methods:
+    clf_scores[name]     = cross_val_score(clf_bal, emb, y, cv=cv_bal,
+                               scoring='accuracy').mean()
+    clf_scores_bal[name] = cross_val_score(clf_bal, emb, y, cv=cv_bal,
+                               scoring='balanced_accuracy').mean()
+    clf_scores_f1[name]  = cross_val_score(clf_bal, emb, y, cv=cv_bal,
+                               scoring='f1_macro').mean()
+
+from sklearn.metrics import classification_report
+print("Accuracy Per Class")
+for name, emb in methods:
+    y_pred = cross_val_predict(clf_bal, emb, y, cv=cv_bal)
+    print(f"\n{name}")
+    print(classification_report(y, y_pred, target_names=le.classes_))
+
+print(f"\nBalanced accuracy (chance={chance_level:.3f}, majority baseline={majority_frac:.3f})")
+for name, bacc in sorted(clf_scores_bal.items(), key=lambda x: -x[1]):
+    f1 = clf_scores_f1.get(name, float('nan'))
+    print(f"{name:25s}  bal_acc={bacc:.4f}  F1_macro={f1:.4f}")
+
+=== CELL 29 (code) ===
+fig, axes = plt.subplots(1, len(methods), figsize=(5*len(methods), 4.5))
+if len(methods) == 1: axes = [axes]
+
+for ax, (name, emb) in zip(axes, methods):
+    y_pred = cross_val_predict(clf_bal, emb, y, cv=cv_bal)
+    cm = confusion_matrix(y, y_pred, normalize='true')
+    ConfusionMatrixDisplay(cm, display_labels=le.classes_).plot(
+        ax=ax, colorbar=False, cmap='Blues')
+    bacc = clf_scores_bal.get(name, float('nan'))
+    ax.set_title(f'{name}\nbal_acc={bacc:.3f}')
+
+plt.suptitle('Confusion Matrices', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_confusion_matrices.png', dpi=150); plt.show()
+
+plot_names = [m[0] for m in methods]
+colors_m   = ['steelblue', 'tomato', 'seagreen', 'purple'][:len(plot_names)]
+
+fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+
+sil_vals = [sil_scores.get(n, np.nan) for n in plot_names]
+bars = axes[0].bar(plot_names, sil_vals, color=colors_m, edgecolor='white')
+axes[0].axhline(0, color='k', lw=0.8)
+axes[0].set_title('Silhouette Score')
+axes[0].set_ylabel('Silhouette Score')
+axes[0].set_xticklabels(plot_names, rotation=25, ha='right')
+
+bal_vals = [clf_scores_bal.get(n, np.nan) for n in plot_names]
+axes[1].bar(plot_names, bal_vals, color=colors_m, edgecolor='white')
+axes[1].axhline(chance_level, color='red', ls='--', label=f'Chance ({chance_level:.2f})')
+axes[1].axhline(majority_frac, color='gray', ls=':', lw=1.5,
+                label=f'Majority baseline ({majority_frac:.2f})')
+axes[1].set_title('Balanced Accuracy')
+axes[1].set_ylabel('Balanced Accuracy')
+axes[1].set_xticklabels(plot_names, rotation=25, ha='right')
+axes[1].set_ylim(0, 1.05); axes[1].legend(fontsize=8)
+
+f1_vals = [clf_scores_f1.get(n, np.nan) for n in plot_names]
+axes[2].bar(plot_names, f1_vals, color=colors_m, edgecolor='white')
+axes[2].axhline(chance_level, color='red', ls='--', label=f'Chance ({chance_level:.2f})')
+axes[2].set_title('Macro F1')
+axes[2].set_ylabel('Macro F1')
+axes[2].set_xticklabels(plot_names, rotation=25, ha='right')
+axes[2].set_ylim(0, 1.05); axes[2].legend(fontsize=8)
+
+plt.tight_layout()
+plt.savefig('fig_quantitative.png', dpi=150); plt.show()
+
+=== CELL 30 (markdown) ===
+shuffle control
+
+=== CELL 31 (code) ===
+N_SHUFFLES = 100
+rng_shuf = np.random.default_rng(seed=SEED)
+
+null_sil = {name: [] for name, _ in methods}
+null_bal = {name: [] for name, _ in methods}
+null_f1 = {name: [] for name, _ in methods}
+
+print(f"running")
+for i in range(N_SHUFFLES):
+    y_s = rng_shuf.permutation(y)
+    for name, emb in methods:
+        null_sil[name].append(silhouette_score(emb, y_s))
+        null_bal[name].append(
+            cross_val_score(clf_bal, emb, y_s, cv=cv_bal,
+                            scoring='balanced_accuracy').mean())
+        null_f1[name].append(
+            cross_val_score(clf_bal, emb, y_s, cv=cv_bal,
+                            scoring='f1_macro').mean())
+
+null_sil = {k: np.array(v) for k, v in null_sil.items()}
+null_bal = {k: np.array(v) for k, v in null_bal.items()}
+null_f1 = {k: np.array(v) for k, v in null_f1.items()}
+
+print("\nShuffle control results:")
+print(f"{'Method':<22} {'Metric':<18} {'Real':>7} {'Null µ':>8} {'Null σ':>8} {'p':>8}")
+for name, emb in methods:
+    for metric, null_arr, real_val in [
+            ('Silhouette',   null_sil[name], sil_scores.get(name, float('nan'))),
+            ('Balanced acc', null_bal[name], clf_scores_bal.get(name, float('nan'))),
+            ('Macro F1',     null_f1[name],  clf_scores_f1.get(name, float('nan')))]:
+        _, p = ttest_1samp(null_arr, real_val, alternative='less')
+        sig = '***' if p < 0.001 else ('**' if p < 0.01 else ('*' if p < 0.05 else 'ns'))
+        print(f"  {name:<20} {metric:<18} {real_val:>7.4f} "
+              f"{null_arr.mean():>8.4f} {null_arr.std():>8.4f} {p:>7.4f} {sig}")
+    print()
+
+=== CELL 32 (markdown) ===
+clip temporal analysis
+
+=== CELL 33 (code) ===
+movie_types = [l for l in unique_labels
+               if any(kw in l.lower() for kw in ['clip','movie','natural','film'])]
+if not movie_types:
+    movie_types = [c for c, _ in Counter(labels).most_common(2)]
+    print(f"Using: {movie_types}")
+else:
+    print(f"Movielike stimulus types: {movie_types}")
+
+frame_resp, frame_time, frame_hash = [], [], []
+STEP = 5
+
+print("running")
+for trial_idx, h in enumerate(hashes):
+    if funcreader.get_video_type(h) not in movie_types:
+        continue
+    try:
+        r = funcreader.get_trial(SESSION, trial_idx)
+        if r is None or 'responses' not in r: continue
+        resp_trusted = r['responses'][keep_neuron_cols, :]
+        n_frames = resp_trusted.shape[1]
+        for f in range(0, n_frames, STEP):
+            frame_resp.append(resp_trusted[:, f])
+            frame_time.append(f)
+            frame_hash.append(h)
+    except Exception:
+        continue
+
+if not frame_resp:
+    print("no movie clip trials found")
+else:
+    RF = np.array(frame_resp)
+    frame_time = np.array(frame_time)
+    frame_hash = np.array(frame_hash)
+    RF_clean = np.nan_to_num(RF[:, keep_neurons], nan=0.0)
+    RF_scaled = scaler.transform(RF_clean)
+    RF_pca = pca.transform(RF_scaled)
+    print(f"Frame matrix: {RF_scaled.shape}  ({len(np.unique(frame_hash))} unique clips)")
+
+    tsne_fr = TSNE(n_components=2, perplexity=20, random_state=SEED,
+                   max_iter=1000, learning_rate='auto', init='pca')
+    RF_tsne = tsne_fr.fit_transform(RF_pca[:, :n_pca_for_tsne])
+
+    unique_clips = np.unique(frame_hash)
+    clip_cmap    = plt.cm.get_cmap('Set2', len(unique_clips))
+    hash_to_col  = {h: clip_cmap(i) for i, h in enumerate(unique_clips)}
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    sc = axes[0,0].scatter(RF_pca[:,0], RF_pca[:,1], c=frame_time,
+                           cmap='viridis', alpha=0.5, s=12)
+    plt.colorbar(sc, ax=axes[0,0], label='Frame index')
+    axes[0,0].set_title('PCA by frame time')
+    axes[0,0].set_xlabel('PC1'); axes[0,0].set_ylabel('PC2')
+
+    for h in unique_clips:
+        m = frame_hash == h
+        axes[0,1].scatter(RF_pca[m,0], RF_pca[m,1], color=hash_to_col[h], alpha=0.5, s=12)
+    axes[0,1].set_title('PCA by clip identity')
+    axes[0,1].set_xlabel('PC1'); axes[0,1].set_ylabel('PC2')
+
+    sc2 = axes[1,0].scatter(RF_tsne[:,0], RF_tsne[:,1], c=frame_time,
+                            cmap='viridis', alpha=0.5, s=12)
+    plt.colorbar(sc2, ax=axes[1,0], label='Frame index')
+    axes[1,0].set_title('t-SNE by frame time')
+    axes[1,0].set_xlabel('tSNE-1'); axes[1,0].set_ylabel('tSNE-2')
+
+    for h in unique_clips:
+        m = frame_hash == h
+        axes[1,1].scatter(RF_tsne[m,0], RF_tsne[m,1], color=hash_to_col[h], alpha=0.5, s=12)
+    axes[1,1].set_title('t-SNE by clip identity')
+    axes[1,1].set_xlabel('tSNE-1'); axes[1,1].set_ylabel('tSNE-2')
+
+    plt.suptitle('Movie Clip Temporal Structure', fontsize=13)
+    plt.tight_layout()
+    plt.savefig('fig_movie_temporal.png', dpi=150)
+    plt.show()
+
+=== CELL 34 (markdown) ===
+neuron space analysis
+
+=== CELL 35 (code) ===
+R_neuron = R_scaled.T
+print(f"Neuron space matrix: {R_neuron.shape}")
+
+pca_n = PCA(n_components=min(20, R_neuron.shape[1]-1), random_state=SEED)
+RN_pca = pca_n.fit_transform(R_neuron)
+
+tsne_n = TSNE(n_components=2, perplexity=min(30, len(R_neuron)//5),
+              random_state=SEED, learning_rate='auto', init='pca')
+RN_tsne = tsne_n.fit_transform(RN_pca)
+
+neuron_layer = trusted_meta_clean['layer'].fillna('unknown').values
+neuron_type  = trusted_meta_clean['classification_system'].fillna('unknown').values
+
+print(f"Layer breakdown:")
+for lyr, cnt in Counter(neuron_layer).items():
+    print(f"  {lyr}: {cnt}")
+print(f"\nType breakdown:")
+for t, cnt in Counter(neuron_type).items():
+    print(f"  {t}: {cnt}")
+
+LAYERS = [l for l in ['L1','L2/3','L4','L5','L6','unknown'] if l in neuron_layer]
+lyr_cmap  = plt.cm.get_cmap('tab10', len(LAYERS))
+lyr_color = {l: lyr_cmap(i) for i, l in enumerate(LAYERS)}
+lyr_patches = [Patch(color=lyr_color[l], label=l) for l in LAYERS]
+
+TYPES = np.unique(neuron_type)
+typ_cmap  = plt.cm.get_cmap('Set1', len(TYPES))
+typ_color = {t: typ_cmap(i) for i, t in enumerate(TYPES)}
+typ_patches = [Patch(color=typ_color[t], label=t) for t in TYPES]
+
+fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+for row, (embedname, emb) in enumerate([('PCA', RN_pca[:,:2]), ('t-SNE', RN_tsne)]):
+    for lyr in LAYERS:
+        m = neuron_layer == lyr
+        axes[row,0].scatter(emb[m,0], emb[m,1], color=lyr_color[lyr], alpha=0.5, s=8)
+    axes[row,0].set_title(f'{embedname} — by Layer')
+    axes[row,0].legend(handles=lyr_patches, markerscale=3, fontsize=8)
+
+    for t in TYPES:
+        m = neuron_type == t
+        axes[row,1].scatter(emb[m,0], emb[m,1], color=typ_color[t], alpha=0.5, s=8)
+    axes[row,1].set_title(f'{embedname} — by Cell Type')
+    axes[row,1].legend(handles=typ_patches, markerscale=3, fontsize=8)
+
+plt.suptitle('Neuron Space DR', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_neuron_space.png', dpi=150); plt.show()
+
+=== CELL 36 (markdown) ===
+summary
+
+=== CELL 37 (code) ===
+summary_rows = []
+for name, emb in methods:
+    summary_rows.append({
+        'Method': name,
+        'Silhouette': f"{sil_scores.get(name, float('nan')):.4f}",
+        'Std Accuracy': f"{clf_scores.get(name, float('nan')):.4f}",
+        'Balanced Accuracy': f"{clf_scores_bal.get(name, float('nan')):.4f}",
+        'Macro F1': f"{clf_scores_f1.get(name, float('nan')):.4f}",
+    })
+
+print('\nResults Summary')
+print(pd.DataFrame(summary_rows).to_string(index=False))
+print(f'\nBaselines:')
+print(f'Always predict Clip (majority): {majority_frac:.4f}')
+print(f'Uniform chance (balanced acc): {chance_level:.4f}')
+print(f'\nIntrinsic dimensionality:')
+print(f'PCs for 80% variance: {n80}')
+print(f'PCs for 90% variance: {n90}')
+print(f'Variance in PC1+PC2: {cumvar[1]*100:.2f}%')
+print(f'Participation ratio (eff dim): {participation_ratio:.1f}')
+print(f'\nNeurons used: {R_scaled.shape[1]} trusted (from {len(session_unit_ids)} recorded)')
+
+=== CELL 38 (markdown) ===
+## L4 Layer Analysis
+
+Repeat the full dimensionality-reduction pipeline using only L4 neurons (the most numerous layer, n=257). L4 is the primary thalamo-cortical input layer, so it may carry a cleaner visual signal than the full population.
+
+=== CELL 39 (code) ===
+# ── L4 subset ─────────────────────────────────────────────────────────
+l4_mask_clean = (trusted_meta_clean['layer'] == 'L4').values
+R_l4_raw      = R_clean[:, l4_mask_clean]   # (stimuli, n_l4), pre-scale
+trusted_meta_l4 = trusted_meta_clean[l4_mask_clean].reset_index(drop=True)
+
+print(f'L4 neurons: {l4_mask_clean.sum()} / {trusted_meta_clean.shape[0]}')
+print(f'L4 response matrix: {R_l4_raw.shape}')
+print(f'Layer check: {trusted_meta_l4["layer"].value_counts().to_dict()}')
+
+# Re-scale on L4 only
+scaler_l4   = StandardScaler()
+R_l4_scaled = scaler_l4.fit_transform(R_l4_raw)
+
+# Keep same stimulus set; re-apply activity filter
+active_l4   = R_l4_scaled.std(axis=1) > 1e-6
+R_l4_scaled = R_l4_scaled[active_l4]
+labels_l4   = labels[active_l4]
+y_l4        = le.transform(labels_l4)
+
+print(f'Stimuli after activity filter: {active_l4.sum()} / {R_l4_raw.shape[0]}')
+print(f'Stimulus distribution: {dict(zip(*np.unique(labels_l4, return_counts=True)))}')
+
+
+=== CELL 40 (markdown) ===
+### PCA – L4
+
+=== CELL 41 (code) ===
+n_pcs_l4 = min(150, R_l4_scaled.shape[0]-1, R_l4_scaled.shape[1]-1)
+pca_l4   = PCA(n_components=n_pcs_l4, random_state=SEED)
+R_l4_pca = pca_l4.fit_transform(R_l4_scaled)
+
+cumvar_l4 = np.cumsum(pca_l4.explained_variance_ratio_)
+ev_l4     = pca_l4.explained_variance_ratio_
+pr_l4     = 1.0 / np.sum(ev_l4**2)
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+axes[0].plot(np.arange(1, n_pcs_l4+1), cumvar_l4*100, '-', lw=1.5, color='steelblue')
+axes[0].set_xlabel('Number of PCs'); axes[0].set_ylabel('Cumulative variance (%)')
+axes[0].set_title('Cumulative Variance — L4')
+axes[1].bar(np.arange(1, 31), ev_l4[:30]*100, color='steelblue', edgecolor='white')
+axes[1].set_xlabel('PC'); axes[1].set_ylabel('Variance %')
+axes[1].set_title('Scree Plot — L4 (first 30 PCs)')
+plt.suptitle('PCA – L4 neurons', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l4_pca_variance.png', dpi=150); plt.show()
+
+n80_l4 = min(int(np.searchsorted(cumvar_l4, 0.80))+1, n_pcs_l4)
+n90_l4 = min(int(np.searchsorted(cumvar_l4, 0.90))+1, n_pcs_l4)
+print(f'PCs for 80% variance: {n80_l4}  (all neurons: {n80})')
+print(f'PCs for 90% variance: {n90_l4}  (all neurons: {n90})')
+print(f'Variance in PC1+PC2:  {cumvar_l4[1]*100:.2f}%  (all neurons: {cumvar[1]*100:.2f}%)')
+print(f'Participation ratio:  {pr_l4:.1f}  (all neurons: {participation_ratio:.1f})')
+
+
+=== CELL 42 (code) ===
+# PCA scatter with confidence ellipses
+fig = plt.figure(figsize=(14, 5))
+gs2 = GridSpec(1, 3, figure=fig, wspace=0.35)
+
+for col, (xi, yi, title) in enumerate([
+        (0, 1, 'PC1 vs PC2'), (0, 2, 'PC1 vs PC3'), (None, None, 'PCA 3D')]):
+    if col < 2:
+        ax = fig.add_subplot(gs2[col])
+        for lbl in unique_labels:
+            m = labels_l4 == lbl
+            ax.scatter(R_l4_pca[m,xi], R_l4_pca[m,yi], color=label_to_color[lbl],
+                       alpha=0.6, s=22, edgecolors='none')
+            confidence_ellipse(R_l4_pca[m,xi], R_l4_pca[m,yi], ax, n_std=2,
+                               edgecolor=label_to_color[lbl], facecolor='none',
+                               lw=1.5, ls='--', alpha=0.8)
+        ax.set_xlabel(f'PC{xi+1} ({ev_l4[xi]*100:.1f}%)')
+        ax.set_ylabel(f'PC{yi+1} ({ev_l4[yi]*100:.1f}%)')
+        ax.set_title(title)
+    else:
+        ax = fig.add_subplot(gs2[2], projection='3d')
+        for lbl in unique_labels:
+            m = labels_l4 == lbl
+            ax.scatter(R_l4_pca[m,0], R_l4_pca[m,1], R_l4_pca[m,2],
+                       color=label_to_color[lbl], alpha=0.6, s=15)
+        ax.set_xlabel('PC1'); ax.set_ylabel('PC2'); ax.set_zlabel('PC3')
+        ax.set_title('PCA 3D')
+
+fig.legend(handles=legend_patches, loc='lower center', ncol=n_types,
+           bbox_to_anchor=(0.5, -0.05))
+plt.suptitle('L4 PCA – 2σ confidence ellipses', fontsize=13, y=1.02)
+plt.savefig('fig_l4_pca_scatter.png', dpi=150); plt.show()
+
+
+=== CELL 43 (markdown) ===
+### t-SNE – L4
+
+=== CELL 44 (code) ===
+n_pca_for_tsne_l4 = min(50, n_pcs_l4)
+tsne_results_l4   = {}
+PERPLEXITIES_L4   = [15, 30, 50]
+
+print('Running t-SNE on L4 neurons...')
+for perp in PERPLEXITIES_L4:
+    tsne_l4 = TSNE(n_components=2, perplexity=perp, random_state=SEED,
+                   max_iter=1000, learning_rate='auto', init='pca')
+    tsne_results_l4[perp] = tsne_l4.fit_transform(R_l4_pca[:, :n_pca_for_tsne_l4])
+
+R_l4_tsne = tsne_results_l4[30]
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+for ax, perp in zip(axes, PERPLEXITIES_L4):
+    for lbl in unique_labels:
+        m = labels_l4 == lbl
+        ax.scatter(tsne_results_l4[perp][m,0], tsne_results_l4[perp][m,1],
+                   color=label_to_color[lbl], alpha=0.7, s=20, edgecolors='none')
+    ax.set_title(f't-SNE  perplexity={perp} — L4')
+    ax.set_xticks([]); ax.set_yticks([])
+axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+plt.suptitle('t-SNE Perplexity Sensitivity – L4', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l4_tsne_perplexity.png', dpi=150); plt.show()
+
+
+=== CELL 45 (markdown) ===
+### UMAP – L4
+
+=== CELL 46 (code) ===
+R_l4_umap = None
+if UMAP_AVAILABLE:
+    umap_results_l4  = {}
+    N_NEIGHBORS_L4   = [5, 15, 50]
+    print('Running UMAP on L4 neurons...')
+    for nn in N_NEIGHBORS_L4:
+        reducer_l4 = umap.UMAP(n_components=2, n_neighbors=nn, min_dist=0.1,
+                               metric='euclidean', random_state=SEED)
+        umap_results_l4[nn] = reducer_l4.fit_transform(R_l4_pca[:, :n_pca_for_tsne_l4])
+    R_l4_umap = umap_results_l4[15]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    for ax, nn in zip(axes, N_NEIGHBORS_L4):
+        for lbl in unique_labels:
+            m = labels_l4 == lbl
+            ax.scatter(umap_results_l4[nn][m,0], umap_results_l4[nn][m,1],
+                       color=label_to_color[lbl], alpha=0.7, s=20, edgecolors='none')
+        ax.set_title(f'n_neighbors={nn} — L4')
+        ax.set_xticks([]); ax.set_yticks([])
+    axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+    plt.suptitle('UMAP Neighbours Sensitivity – L4', fontsize=13)
+    plt.tight_layout()
+    plt.savefig('fig_l4_umap_neighbors.png', dpi=150); plt.show()
+
+
+=== CELL 47 (markdown) ===
+### CEBRA – L4
+
+=== CELL 48 (code) ===
+R_l4_cebra = None
+if CEBRA_AVAILABLE:
+    try:
+        import torch
+        label_cont_l4 = y_l4.astype(np.float32).reshape(-1, 1)
+        cb_model_l4 = cebra.CEBRA(
+            model_architecture='offset10-model',
+            batch_size=min(512, len(R_l4_scaled)//2),
+            learning_rate=3e-4,
+            temperature=1.0,
+            output_dimension=8,
+            max_iterations=2000,
+            device='cpu',
+            verbose=True,
+        )
+        cb_model_l4.fit(R_l4_scaled.astype(np.float32), label_cont_l4)
+        R_l4_cebra = cb_model_l4.transform(R_l4_scaled.astype(np.float32))
+
+        fig, ax = plt.subplots(figsize=(6,5))
+        for lbl in unique_labels:
+            m = labels_l4 == lbl
+            ax.scatter(R_l4_cebra[m,0], R_l4_cebra[m,1], color=label_to_color[lbl],
+                       alpha=0.7, s=25, label=lbl)
+        ax.set_title('CEBRA Embedding – L4')
+        ax.set_xlabel('Dim-1'); ax.set_ylabel('Dim-2')
+        ax.legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig('fig_l4_cebra.png', dpi=150); plt.show()
+    except Exception as e:
+        print(f'CEBRA failed: {e}')
+        R_l4_cebra = None
+else:
+    print('CEBRA not installed')
+
+
+=== CELL 49 (markdown) ===
+### DR Comparison – L4
+
+=== CELL 50 (code) ===
+methods_l4 = [('PCA', R_l4_pca[:, :2]), ('t-SNE (perp=30)', R_l4_tsne)]
+if UMAP_AVAILABLE  and R_l4_umap  is not None: methods_l4.append(('UMAP (nn=15)',  R_l4_umap))
+if CEBRA_AVAILABLE and R_l4_cebra is not None: methods_l4.append(('CEBRA', R_l4_cebra[:, :2]))
+
+fig, axes = plt.subplots(1, len(methods_l4), figsize=(5*len(methods_l4), 4.5))
+if len(methods_l4) == 1: axes = [axes]
+for ax, (name, emb) in zip(axes, methods_l4):
+    for lbl in unique_labels:
+        m = labels_l4 == lbl
+        ax.scatter(emb[m,0], emb[m,1], color=label_to_color[lbl],
+                   alpha=0.75, s=22, edgecolors='none')
+    ax.set_title(name, fontsize=13, fontweight='bold')
+    ax.set_xticks([]); ax.set_yticks([])
+axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left', fontsize=9)
+plt.suptitle('Dimensionality Reduction Comparison – L4 neurons', fontsize=13, y=1.03)
+plt.tight_layout()
+plt.savefig('fig_l4_dr_comparison.png', dpi=150); plt.show()
+
+
+=== CELL 51 (markdown) ===
+### Quantitative Evaluation – L4
+
+=== CELL 52 (code) ===
+counts_l4        = {lbl: int(np.sum(labels_l4 == lbl)) for lbl in unique_labels}
+majority_frac_l4 = max(counts_l4.values()) / len(labels_l4)
+
+rng_bal_l4 = np.random.default_rng(seed=SEED)
+N_BAL_l4   = int(min(counts_l4.values()))
+bal_idx_l4 = np.sort(np.concatenate([
+    rng_bal_l4.choice(np.where(labels_l4 == lbl)[0], size=N_BAL_l4, replace=False)
+    for lbl in unique_labels
+]))
+y_bal_l4 = y_l4[bal_idx_l4]
+
+cv_bal_l4  = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+clf_bal_l4 = LogisticRegression(max_iter=2000, C=1.0, random_state=SEED, class_weight='balanced')
+
+sil_scores_l4     = {}
+clf_scores_l4     = {}
+clf_scores_bal_l4 = {}
+clf_scores_f1_l4  = {}
+
+for name, emb in methods_l4:
+    sil_scores_l4[name]     = silhouette_score(emb, y_l4)
+    clf_scores_l4[name]     = cross_val_score(clf_bal_l4, emb, y_l4, cv=cv_bal_l4,
+                                              scoring='accuracy').mean()
+    clf_scores_bal_l4[name] = cross_val_score(clf_bal_l4, emb, y_l4, cv=cv_bal_l4,
+                                              scoring='balanced_accuracy').mean()
+    clf_scores_f1_l4[name]  = cross_val_score(clf_bal_l4, emb, y_l4, cv=cv_bal_l4,
+                                              scoring='f1_macro').mean()
+
+for k in [2, 5, 10, 20, 50]:
+    if k < R_l4_pca.shape[1]:
+        sil_scores_l4[f'PCA-{k}D'] = silhouette_score(R_l4_pca[:, :k], y_l4)
+
+print('Silhouette — L4 only')
+for name, sc in sorted(sil_scores_l4.items(), key=lambda x: -x[1]):
+    prev = sil_scores.get(name, float('nan'))
+    print(f'{name:25s}  L4={sc:+.4f}  all={prev:+.4f}')
+
+print('\nBalanced Accuracy — L4 only')
+for name, bacc in sorted(clf_scores_bal_l4.items(), key=lambda x: -x[1]):
+    prev = clf_scores_bal.get(name, float('nan'))
+    f1   = clf_scores_f1_l4.get(name, float('nan'))
+    print(f'{name:25s}  L4 bal_acc={bacc:.4f}  all={prev:.4f}  L4 F1={f1:.4f}')
+
+
+=== CELL 53 (code) ===
+from sklearn.metrics import classification_report as _cr
+print('Classification Report per method (L4 only)\n')
+for name, emb in methods_l4:
+    y_pred_l4 = cross_val_predict(clf_bal_l4, emb, y_l4, cv=cv_bal_l4)
+    print(f'{name}')
+    print(_cr(y_l4, y_pred_l4, target_names=le.classes_))
+
+fig, axes = plt.subplots(1, len(methods_l4), figsize=(5*len(methods_l4), 4.5))
+if len(methods_l4) == 1: axes = [axes]
+for ax, (name, emb) in zip(axes, methods_l4):
+    y_pred_l4 = cross_val_predict(clf_bal_l4, emb, y_l4, cv=cv_bal_l4)
+    cm_l4 = confusion_matrix(y_l4, y_pred_l4, normalize='true')
+    ConfusionMatrixDisplay(cm_l4, display_labels=le.classes_).plot(
+        ax=ax, colorbar=False, cmap='Blues')
+    ax.set_title(f'{name}\nbal_acc={clf_scores_bal_l4.get(name, float("nan")):.3f}')
+plt.suptitle('Confusion Matrices – L4 neurons', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l4_confusion_matrices.png', dpi=150); plt.show()
+
+plot_names_l4 = [m[0] for m in methods_l4]
+colors_m_l4   = ['steelblue', 'tomato', 'seagreen', 'purple'][:len(plot_names_l4)]
+
+fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+sil_vals_l4 = [sil_scores_l4.get(n, float('nan')) for n in plot_names_l4]
+axes[0].bar(plot_names_l4, sil_vals_l4, color=colors_m_l4, edgecolor='white')
+axes[0].axhline(0, color='k', lw=0.8)
+axes[0].set_title('Silhouette Score – L4'); axes[0].set_ylabel('Silhouette Score')
+axes[0].set_xticklabels(plot_names_l4, rotation=25, ha='right')
+
+bal_vals_l4 = [clf_scores_bal_l4.get(n, float('nan')) for n in plot_names_l4]
+axes[1].bar(plot_names_l4, bal_vals_l4, color=colors_m_l4, edgecolor='white')
+axes[1].axhline(chance_level, color='red', ls='--', label=f'Chance ({chance_level:.2f})')
+axes[1].set_title('Balanced Accuracy – L4'); axes[1].set_ylabel('Balanced Accuracy')
+axes[1].set_xticklabels(plot_names_l4, rotation=25, ha='right')
+axes[1].set_ylim(0, 1); axes[1].legend(fontsize=8)
+
+f1_vals_l4 = [clf_scores_f1_l4.get(n, float('nan')) for n in plot_names_l4]
+axes[2].bar(plot_names_l4, f1_vals_l4, color=colors_m_l4, edgecolor='white')
+axes[2].axhline(chance_level, color='red', ls='--', label=f'Chance ({chance_level:.2f})')
+axes[2].set_title('Macro F1 – L4'); axes[2].set_ylabel('Macro F1')
+axes[2].set_xticklabels(plot_names_l4, rotation=25, ha='right')
+axes[2].set_ylim(0, 1); axes[2].legend(fontsize=8)
+
+plt.tight_layout()
+plt.savefig('fig_l4_quantitative.png', dpi=150); plt.show()
+
+
+=== CELL 54 (markdown) ===
+### Shuffle Control – L4
+
+=== CELL 55 (code) ===
+N_SHUFFLES_L4 = 100
+rng_shuf_l4   = np.random.default_rng(seed=SEED)
+
+null_sil_l4 = {name: [] for name, _ in methods_l4}
+null_bal_l4 = {name: [] for name, _ in methods_l4}
+null_f1_l4  = {name: [] for name, _ in methods_l4}
+
+print('Running shuffle control for L4...')
+for i in range(N_SHUFFLES_L4):
+    y_s = rng_shuf_l4.permutation(y_l4)
+    for name, emb in methods_l4:
+        null_sil_l4[name].append(silhouette_score(emb, y_s))
+        null_bal_l4[name].append(cross_val_score(clf_bal_l4, emb, y_s, cv=cv_bal_l4,
+                                                 scoring='balanced_accuracy').mean())
+        null_f1_l4[name].append(cross_val_score(clf_bal_l4, emb, y_s, cv=cv_bal_l4,
+                                                scoring='f1_macro').mean())
+
+null_sil_l4 = {k: np.array(v) for k, v in null_sil_l4.items()}
+null_bal_l4 = {k: np.array(v) for k, v in null_bal_l4.items()}
+null_f1_l4  = {k: np.array(v) for k, v in null_f1_l4.items()}
+
+print('\nShuffle control results — L4:')
+print(f"{'Method':<22} {'Metric':<18} {'Real':>7} {'Null µ':>8} {'Null σ':>8} {'p':>8}")
+for name, emb in methods_l4:
+    for metric, null_arr, real_val in [
+            ('Silhouette',   null_sil_l4[name], sil_scores_l4.get(name, float('nan'))),
+            ('Balanced acc', null_bal_l4[name], clf_scores_bal_l4.get(name, float('nan'))),
+            ('Macro F1',     null_f1_l4[name],  clf_scores_f1_l4.get(name, float('nan')))]:
+        _, p = ttest_1samp(null_arr, real_val, alternative='less')
+        sig = '***' if p < 0.001 else ('**' if p < 0.01 else ('*' if p < 0.05 else 'ns'))
+        print(f'  {name:<20} {metric:<18} {real_val:>7.4f} '
+              f'{null_arr.mean():>8.4f} {null_arr.std():>8.4f} {p:>7.4f} {sig}')
+    print()
+
+
+=== CELL 56 (markdown) ===
+### Head-to-Head Comparison: All Neurons vs L4 Only
+
+=== CELL 57 (code) ===
+common_methods = [name for name, _ in methods if name in {n for n, _ in methods_l4}]
+
+print('Head-to-head comparison: All neurons vs L4 only')
+print(f"{'Method':<22} {'Metric':<18} {'All':>7} {'L4':>7} {'Delta':>8}")
+for name in common_methods:
+    for metric, all_d, l4_d in [
+            ('Silhouette',   sil_scores,     sil_scores_l4),
+            ('Balanced acc', clf_scores_bal, clf_scores_bal_l4),
+            ('Macro F1',     clf_scores_f1,  clf_scores_f1_l4)]:
+        a = all_d.get(name, float('nan'))
+        b = l4_d.get(name,  float('nan'))
+        delta = b - a
+        arrow = chr(9650) if delta > 0 else chr(9660)   # ▲ / ▼
+        print(f'  {name:<20} {metric:<18} {a:>7.4f} {b:>7.4f} {delta:>+7.4f} {arrow}')
+    print()
+
+# Side-by-side bar chart
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+x     = np.arange(len(common_methods))
+width = 0.35
+
+all_bac = [clf_scores_bal.get(n, float('nan')) for n in common_methods]
+l4_bac  = [clf_scores_bal_l4.get(n, float('nan')) for n in common_methods]
+axes[0].bar(x - width/2, all_bac, width, label='All neurons', color='steelblue', alpha=0.85)
+axes[0].bar(x + width/2, l4_bac,  width, label='L4 only',    color='tomato',    alpha=0.85)
+axes[0].axhline(chance_level, color='red', ls='--', lw=1.2, label=f'Chance ({chance_level:.2f})')
+axes[0].set_xticks(x); axes[0].set_xticklabels(common_methods, rotation=20, ha='right')
+axes[0].set_ylabel('Balanced Accuracy'); axes[0].set_title('Balanced Accuracy Comparison')
+axes[0].set_ylim(0, 1); axes[0].legend(fontsize=8)
+
+all_f1 = [clf_scores_f1.get(n, float('nan')) for n in common_methods]
+l4_f1  = [clf_scores_f1_l4.get(n, float('nan')) for n in common_methods]
+axes[1].bar(x - width/2, all_f1, width, label='All neurons', color='steelblue', alpha=0.85)
+axes[1].bar(x + width/2, l4_f1,  width, label='L4 only',    color='tomato',    alpha=0.85)
+axes[1].axhline(chance_level, color='red', ls='--', lw=1.2, label=f'Chance ({chance_level:.2f})')
+axes[1].set_xticks(x); axes[1].set_xticklabels(common_methods, rotation=20, ha='right')
+axes[1].set_ylabel('Macro F1'); axes[1].set_title('Macro F1 Comparison')
+axes[1].set_ylim(0, 1); axes[1].legend(fontsize=8)
+
+plt.suptitle('All Neurons vs L4 Only — Classification Performance', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l4_vs_all_comparison.png', dpi=150); plt.show()
+
+
+=== CELL 58 (markdown) ===
+### L4 Summary
+
+=== CELL 59 (code) ===
+summary_l4_rows = []
+for name, emb in methods_l4:
+    summary_l4_rows.append({
+        'Method': name,
+        'Silhouette': f"{sil_scores_l4.get(name, float('nan')):.4f}",
+        'Std Accuracy': f"{clf_scores_l4.get(name, float('nan')):.4f}",
+        'Balanced Accuracy': f"{clf_scores_bal_l4.get(name, float('nan')):.4f}",
+        'Macro F1': f"{clf_scores_f1_l4.get(name, float('nan')):.4f}",
+    })
+
+print('L4 Results Summary')
+print(pd.DataFrame(summary_l4_rows).to_string(index=False))
+print(f'\nBaselines:')
+print(f'Always predict Clip (majority): {majority_frac_l4:.4f}')
+print(f'Uniform chance (balanced acc):  {chance_level:.4f}')
+print(f'\nIntrinsic dimensionality — L4:')
+print(f'PCs for 80% variance: {n80_l4}  (all neurons: {n80})')
+print(f'PCs for 90% variance: {n90_l4}  (all neurons: {n90})')
+print(f'Variance in PC1+PC2:  {cumvar_l4[1]*100:.2f}%  (all neurons: {cumvar[1]*100:.2f}%)')
+print(f'Participation ratio:  {pr_l4:.1f}  (all neurons: {participation_ratio:.1f})')
+print(f'\nL4 neurons used: {l4_mask_clean.sum()} of {trusted_meta_clean.shape[0]} total')
+
+
+=== CELL 60 (markdown) ===
+## L2/3 Layer Analysis (Comparison)
+
+Run the same pipeline on L2/3 neurons (n=220, the second-largest layer). L4 is the primary thalamo-cortical input layer, while L2/3 is downstream — so we expect L2/3 to carry a noisier / less stimulus-locked signal. This is included as a contrast to highlight L4's role.
+
+=== CELL 61 (code) ===
+# ── L2/3 subset ───────────────────────────────────────────────────────
+l23_mask_clean = (trusted_meta_clean['layer'] == 'L2/3').values
+R_l23_raw      = R_clean[:, l23_mask_clean]
+trusted_meta_l23 = trusted_meta_clean[l23_mask_clean].reset_index(drop=True)
+
+print(f'L2/3 neurons: {l23_mask_clean.sum()} / {trusted_meta_clean.shape[0]}')
+print(f'L2/3 response matrix: {R_l23_raw.shape}')
+print(f'Layer check: {trusted_meta_l23["layer"].value_counts().to_dict()}')
+
+scaler_l23   = StandardScaler()
+R_l23_scaled = scaler_l23.fit_transform(R_l23_raw)
+
+active_l23   = R_l23_scaled.std(axis=1) > 1e-6
+R_l23_scaled = R_l23_scaled[active_l23]
+labels_l23   = labels[active_l23]
+y_l23        = le.transform(labels_l23)
+
+print(f'Stimuli after activity filter: {active_l23.sum()} / {R_l23_raw.shape[0]}')
+print(f'Stimulus distribution: {dict(zip(*np.unique(labels_l23, return_counts=True)))}')
+
+
+=== CELL 62 (markdown) ===
+### PCA – L2/3
+
+=== CELL 63 (code) ===
+n_pcs_l23 = min(150, R_l23_scaled.shape[0]-1, R_l23_scaled.shape[1]-1)
+pca_l23   = PCA(n_components=n_pcs_l23, random_state=SEED)
+R_l23_pca = pca_l23.fit_transform(R_l23_scaled)
+
+cumvar_l23 = np.cumsum(pca_l23.explained_variance_ratio_)
+ev_l23     = pca_l23.explained_variance_ratio_
+pr_l23     = 1.0 / np.sum(ev_l23**2)
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+axes[0].plot(np.arange(1, n_pcs_l23+1), cumvar_l23*100, '-', lw=1.5, color='seagreen')
+axes[0].set_xlabel('Number of PCs'); axes[0].set_ylabel('Cumulative variance (%)')
+axes[0].set_title('Cumulative Variance — L2/3')
+axes[1].bar(np.arange(1, 31), ev_l23[:30]*100, color='seagreen', edgecolor='white')
+axes[1].set_xlabel('PC'); axes[1].set_ylabel('Variance %')
+axes[1].set_title('Scree Plot — L2/3 (first 30 PCs)')
+plt.suptitle('PCA – L2/3 neurons', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l23_pca_variance.png', dpi=150); plt.show()
+
+n80_l23 = min(int(np.searchsorted(cumvar_l23, 0.80))+1, n_pcs_l23)
+n90_l23 = min(int(np.searchsorted(cumvar_l23, 0.90))+1, n_pcs_l23)
+print(f'PCs for 80% variance: {n80_l23}  (L4: {n80_l4}, all: {n80})')
+print(f'PCs for 90% variance: {n90_l23}  (L4: {n90_l4}, all: {n90})')
+print(f'Variance in PC1+PC2:  {cumvar_l23[1]*100:.2f}%  (L4: {cumvar_l4[1]*100:.2f}%, all: {cumvar[1]*100:.2f}%)')
+print(f'Participation ratio:  {pr_l23:.1f}  (L4: {pr_l4:.1f}, all: {participation_ratio:.1f})')
+
+
+=== CELL 64 (code) ===
+# PCA scatter with confidence ellipses
+fig = plt.figure(figsize=(14, 5))
+gs3 = GridSpec(1, 3, figure=fig, wspace=0.35)
+
+for col, (xi, yi, title) in enumerate([
+        (0, 1, 'PC1 vs PC2'), (0, 2, 'PC1 vs PC3'), (None, None, 'PCA 3D')]):
+    if col < 2:
+        ax = fig.add_subplot(gs3[col])
+        for lbl in unique_labels:
+            m = labels_l23 == lbl
+            ax.scatter(R_l23_pca[m,xi], R_l23_pca[m,yi], color=label_to_color[lbl],
+                       alpha=0.6, s=22, edgecolors='none')
+            confidence_ellipse(R_l23_pca[m,xi], R_l23_pca[m,yi], ax, n_std=2,
+                               edgecolor=label_to_color[lbl], facecolor='none',
+                               lw=1.5, ls='--', alpha=0.8)
+        ax.set_xlabel(f'PC{xi+1} ({ev_l23[xi]*100:.1f}%)')
+        ax.set_ylabel(f'PC{yi+1} ({ev_l23[yi]*100:.1f}%)')
+        ax.set_title(title)
+    else:
+        ax = fig.add_subplot(gs3[2], projection='3d')
+        for lbl in unique_labels:
+            m = labels_l23 == lbl
+            ax.scatter(R_l23_pca[m,0], R_l23_pca[m,1], R_l23_pca[m,2],
+                       color=label_to_color[lbl], alpha=0.6, s=15)
+        ax.set_xlabel('PC1'); ax.set_ylabel('PC2'); ax.set_zlabel('PC3')
+        ax.set_title('PCA 3D')
+
+fig.legend(handles=legend_patches, loc='lower center', ncol=n_types,
+           bbox_to_anchor=(0.5, -0.05))
+plt.suptitle('L2/3 PCA – 2σ confidence ellipses', fontsize=13, y=1.02)
+plt.savefig('fig_l23_pca_scatter.png', dpi=150); plt.show()
+
+
+=== CELL 65 (markdown) ===
+### t-SNE – L2/3
+
+=== CELL 66 (code) ===
+n_pca_for_tsne_l23 = min(50, n_pcs_l23)
+tsne_results_l23   = {}
+PERPLEXITIES_L23   = [15, 30, 50]
+
+print('Running t-SNE on L2/3 neurons...')
+for perp in PERPLEXITIES_L23:
+    tsne_l23 = TSNE(n_components=2, perplexity=perp, random_state=SEED,
+                    max_iter=1000, learning_rate='auto', init='pca')
+    tsne_results_l23[perp] = tsne_l23.fit_transform(R_l23_pca[:, :n_pca_for_tsne_l23])
+
+R_l23_tsne = tsne_results_l23[30]
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+for ax, perp in zip(axes, PERPLEXITIES_L23):
+    for lbl in unique_labels:
+        m = labels_l23 == lbl
+        ax.scatter(tsne_results_l23[perp][m,0], tsne_results_l23[perp][m,1],
+                   color=label_to_color[lbl], alpha=0.7, s=20, edgecolors='none')
+    ax.set_title(f't-SNE  perplexity={perp} — L2/3')
+    ax.set_xticks([]); ax.set_yticks([])
+axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+plt.suptitle('t-SNE Perplexity Sensitivity – L2/3', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l23_tsne_perplexity.png', dpi=150); plt.show()
+
+
+=== CELL 67 (markdown) ===
+### UMAP – L2/3
+
+=== CELL 68 (code) ===
+R_l23_umap = None
+if UMAP_AVAILABLE:
+    umap_results_l23 = {}
+    N_NEIGHBORS_L23  = [5, 15, 50]
+    print('Running UMAP on L2/3 neurons...')
+    for nn in N_NEIGHBORS_L23:
+        reducer_l23 = umap.UMAP(n_components=2, n_neighbors=nn, min_dist=0.1,
+                                metric='euclidean', random_state=SEED)
+        umap_results_l23[nn] = reducer_l23.fit_transform(R_l23_pca[:, :n_pca_for_tsne_l23])
+    R_l23_umap = umap_results_l23[15]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    for ax, nn in zip(axes, N_NEIGHBORS_L23):
+        for lbl in unique_labels:
+            m = labels_l23 == lbl
+            ax.scatter(umap_results_l23[nn][m,0], umap_results_l23[nn][m,1],
+                       color=label_to_color[lbl], alpha=0.7, s=20, edgecolors='none')
+        ax.set_title(f'n_neighbors={nn} — L2/3')
+        ax.set_xticks([]); ax.set_yticks([])
+    axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+    plt.suptitle('UMAP Neighbours Sensitivity – L2/3', fontsize=13)
+    plt.tight_layout()
+    plt.savefig('fig_l23_umap_neighbors.png', dpi=150); plt.show()
+
+
+=== CELL 69 (markdown) ===
+### CEBRA – L2/3
+
+=== CELL 70 (code) ===
+R_l23_cebra = None
+if CEBRA_AVAILABLE:
+    try:
+        import torch
+        label_cont_l23 = y_l23.astype(np.float32).reshape(-1, 1)
+        cb_model_l23 = cebra.CEBRA(
+            model_architecture='offset10-model',
+            batch_size=min(512, len(R_l23_scaled)//2),
+            learning_rate=3e-4,
+            temperature=1.0,
+            output_dimension=8,
+            max_iterations=2000,
+            device='cpu',
+            verbose=True,
+        )
+        cb_model_l23.fit(R_l23_scaled.astype(np.float32), label_cont_l23)
+        R_l23_cebra = cb_model_l23.transform(R_l23_scaled.astype(np.float32))
+
+        fig, ax = plt.subplots(figsize=(6,5))
+        for lbl in unique_labels:
+            m = labels_l23 == lbl
+            ax.scatter(R_l23_cebra[m,0], R_l23_cebra[m,1], color=label_to_color[lbl],
+                       alpha=0.7, s=25, label=lbl)
+        ax.set_title('CEBRA Embedding – L2/3')
+        ax.set_xlabel('Dim-1'); ax.set_ylabel('Dim-2')
+        ax.legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig('fig_l23_cebra.png', dpi=150); plt.show()
+    except Exception as e:
+        print(f'CEBRA failed: {e}')
+        R_l23_cebra = None
+else:
+    print('CEBRA not installed')
+
+
+=== CELL 71 (markdown) ===
+### DR Comparison – L2/3
+
+=== CELL 72 (code) ===
+methods_l23 = [('PCA', R_l23_pca[:, :2]), ('t-SNE (perp=30)', R_l23_tsne)]
+if UMAP_AVAILABLE  and R_l23_umap  is not None: methods_l23.append(('UMAP (nn=15)', R_l23_umap))
+if CEBRA_AVAILABLE and R_l23_cebra is not None: methods_l23.append(('CEBRA', R_l23_cebra[:, :2]))
+
+fig, axes = plt.subplots(1, len(methods_l23), figsize=(5*len(methods_l23), 4.5))
+if len(methods_l23) == 1: axes = [axes]
+for ax, (name, emb) in zip(axes, methods_l23):
+    for lbl in unique_labels:
+        m = labels_l23 == lbl
+        ax.scatter(emb[m,0], emb[m,1], color=label_to_color[lbl],
+                   alpha=0.75, s=22, edgecolors='none')
+    ax.set_title(name, fontsize=13, fontweight='bold')
+    ax.set_xticks([]); ax.set_yticks([])
+axes[-1].legend(handles=legend_patches, bbox_to_anchor=(1.05,1), loc='upper left', fontsize=9)
+plt.suptitle('Dimensionality Reduction Comparison – L2/3 neurons', fontsize=13, y=1.03)
+plt.tight_layout()
+plt.savefig('fig_l23_dr_comparison.png', dpi=150); plt.show()
+
+
+=== CELL 73 (markdown) ===
+### Quantitative Evaluation – L2/3
+
+=== CELL 74 (code) ===
+counts_l23        = {lbl: int(np.sum(labels_l23 == lbl)) for lbl in unique_labels}
+majority_frac_l23 = max(counts_l23.values()) / len(labels_l23)
+
+cv_bal_l23  = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+clf_bal_l23 = LogisticRegression(max_iter=2000, C=1.0, random_state=SEED, class_weight='balanced')
+
+sil_scores_l23     = {}
+clf_scores_l23     = {}
+clf_scores_bal_l23 = {}
+clf_scores_f1_l23  = {}
+
+for name, emb in methods_l23:
+    sil_scores_l23[name]     = silhouette_score(emb, y_l23)
+    clf_scores_l23[name]     = cross_val_score(clf_bal_l23, emb, y_l23, cv=cv_bal_l23,
+                                                scoring='accuracy').mean()
+    clf_scores_bal_l23[name] = cross_val_score(clf_bal_l23, emb, y_l23, cv=cv_bal_l23,
+                                                scoring='balanced_accuracy').mean()
+    clf_scores_f1_l23[name]  = cross_val_score(clf_bal_l23, emb, y_l23, cv=cv_bal_l23,
+                                                scoring='f1_macro').mean()
+
+for k in [2, 5, 10, 20, 50]:
+    if k < R_l23_pca.shape[1]:
+        sil_scores_l23[f'PCA-{k}D'] = silhouette_score(R_l23_pca[:, :k], y_l23)
+
+print('Silhouette — L2/3 only')
+for name, sc in sorted(sil_scores_l23.items(), key=lambda x: -x[1]):
+    prev_l4  = sil_scores_l4.get(name, float('nan'))
+    prev_all = sil_scores.get(name, float('nan'))
+    print(f'{name:25s}  L2/3={sc:+.4f}  L4={prev_l4:+.4f}  all={prev_all:+.4f}')
+
+print('\nBalanced Accuracy — L2/3 only')
+for name, bacc in sorted(clf_scores_bal_l23.items(), key=lambda x: -x[1]):
+    prev_l4  = clf_scores_bal_l4.get(name, float('nan'))
+    prev_all = clf_scores_bal.get(name, float('nan'))
+    f1       = clf_scores_f1_l23.get(name, float('nan'))
+    print(f'{name:25s}  L2/3 bal_acc={bacc:.4f}  L4={prev_l4:.4f}  all={prev_all:.4f}  L2/3 F1={f1:.4f}')
+
+
+=== CELL 75 (code) ===
+from sklearn.metrics import classification_report as _cr
+print('Classification Report per method (L2/3 only)\n')
+for name, emb in methods_l23:
+    y_pred_l23 = cross_val_predict(clf_bal_l23, emb, y_l23, cv=cv_bal_l23)
+    print(f'{name}')
+    print(_cr(y_l23, y_pred_l23, target_names=le.classes_))
+
+fig, axes = plt.subplots(1, len(methods_l23), figsize=(5*len(methods_l23), 4.5))
+if len(methods_l23) == 1: axes = [axes]
+for ax, (name, emb) in zip(axes, methods_l23):
+    y_pred_l23 = cross_val_predict(clf_bal_l23, emb, y_l23, cv=cv_bal_l23)
+    cm_l23 = confusion_matrix(y_l23, y_pred_l23, normalize='true')
+    ConfusionMatrixDisplay(cm_l23, display_labels=le.classes_).plot(
+        ax=ax, colorbar=False, cmap='Greens')
+    ax.set_title(f'{name}\nbal_acc={clf_scores_bal_l23.get(name, float("nan")):.3f}')
+plt.suptitle('Confusion Matrices – L2/3 neurons', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l23_confusion_matrices.png', dpi=150); plt.show()
+
+
+=== CELL 76 (markdown) ===
+### Shuffle Control – L2/3
+
+=== CELL 77 (code) ===
+N_SHUFFLES_L23 = 100
+rng_shuf_l23   = np.random.default_rng(seed=SEED)
+
+null_sil_l23 = {name: [] for name, _ in methods_l23}
+null_bal_l23 = {name: [] for name, _ in methods_l23}
+null_f1_l23  = {name: [] for name, _ in methods_l23}
+
+print('Running shuffle control for L2/3...')
+for i in range(N_SHUFFLES_L23):
+    y_s = rng_shuf_l23.permutation(y_l23)
+    for name, emb in methods_l23:
+        null_sil_l23[name].append(silhouette_score(emb, y_s))
+        null_bal_l23[name].append(cross_val_score(clf_bal_l23, emb, y_s, cv=cv_bal_l23,
+                                                  scoring='balanced_accuracy').mean())
+        null_f1_l23[name].append(cross_val_score(clf_bal_l23, emb, y_s, cv=cv_bal_l23,
+                                                 scoring='f1_macro').mean())
+
+null_sil_l23 = {k: np.array(v) for k, v in null_sil_l23.items()}
+null_bal_l23 = {k: np.array(v) for k, v in null_bal_l23.items()}
+null_f1_l23  = {k: np.array(v) for k, v in null_f1_l23.items()}
+
+print('\nShuffle control results — L2/3:')
+print(f"{'Method':<22} {'Metric':<18} {'Real':>7} {'Null µ':>8} {'Null σ':>8} {'p':>8}")
+for name, emb in methods_l23:
+    for metric, null_arr, real_val in [
+            ('Silhouette',   null_sil_l23[name], sil_scores_l23.get(name, float('nan'))),
+            ('Balanced acc', null_bal_l23[name], clf_scores_bal_l23.get(name, float('nan'))),
+            ('Macro F1',     null_f1_l23[name],  clf_scores_f1_l23.get(name, float('nan')))]:
+        _, p = ttest_1samp(null_arr, real_val, alternative='less')
+        sig = '***' if p < 0.001 else ('**' if p < 0.01 else ('*' if p < 0.05 else 'ns'))
+        print(f'  {name:<20} {metric:<18} {real_val:>7.4f} '
+              f'{null_arr.mean():>8.4f} {null_arr.std():>8.4f} {p:>7.4f} {sig}')
+    print()
+
+
+=== CELL 78 (markdown) ===
+### Three-way Comparison: All vs L4 vs L2/3
+
+=== CELL 79 (code) ===
+three_way_methods = [name for name, _ in methods
+                     if name in {n for n,_ in methods_l4}
+                     and name in {n for n,_ in methods_l23}]
+
+print('Three-way comparison: All neurons vs L4 vs L2/3')
+print(f"{'Method':<22} {'Metric':<18} {'All':>8} {'L4':>8} {'L2/3':>8}")
+for name in three_way_methods:
+    for metric, all_d, l4_d, l23_d in [
+            ('Silhouette',   sil_scores,     sil_scores_l4,     sil_scores_l23),
+            ('Balanced acc', clf_scores_bal, clf_scores_bal_l4, clf_scores_bal_l23),
+            ('Macro F1',     clf_scores_f1,  clf_scores_f1_l4,  clf_scores_f1_l23)]:
+        a   = all_d.get(name, float('nan'))
+        b   = l4_d.get(name,  float('nan'))
+        c   = l23_d.get(name, float('nan'))
+        print(f'  {name:<20} {metric:<18} {a:>8.4f} {b:>8.4f} {c:>8.4f}')
+    print()
+
+# Three-way bar chart
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+x     = np.arange(len(three_way_methods))
+width = 0.27
+
+all_bac = [clf_scores_bal.get(n, float('nan'))     for n in three_way_methods]
+l4_bac  = [clf_scores_bal_l4.get(n, float('nan'))  for n in three_way_methods]
+l23_bac = [clf_scores_bal_l23.get(n, float('nan')) for n in three_way_methods]
+axes[0].bar(x - width, all_bac, width, label='All',  color='steelblue', alpha=0.85)
+axes[0].bar(x,         l4_bac,  width, label='L4',   color='tomato',    alpha=0.85)
+axes[0].bar(x + width, l23_bac, width, label='L2/3', color='seagreen',  alpha=0.85)
+axes[0].axhline(chance_level, color='red', ls='--', lw=1.2, label=f'Chance ({chance_level:.2f})')
+axes[0].set_xticks(x); axes[0].set_xticklabels(three_way_methods, rotation=20, ha='right')
+axes[0].set_ylabel('Balanced Accuracy'); axes[0].set_title('Balanced Accuracy')
+axes[0].set_ylim(0, 1); axes[0].legend(fontsize=8)
+
+all_f1 = [clf_scores_f1.get(n, float('nan'))     for n in three_way_methods]
+l4_f1  = [clf_scores_f1_l4.get(n, float('nan'))  for n in three_way_methods]
+l23_f1 = [clf_scores_f1_l23.get(n, float('nan')) for n in three_way_methods]
+axes[1].bar(x - width, all_f1, width, label='All',  color='steelblue', alpha=0.85)
+axes[1].bar(x,         l4_f1,  width, label='L4',   color='tomato',    alpha=0.85)
+axes[1].bar(x + width, l23_f1, width, label='L2/3', color='seagreen',  alpha=0.85)
+axes[1].axhline(chance_level, color='red', ls='--', lw=1.2, label=f'Chance ({chance_level:.2f})')
+axes[1].set_xticks(x); axes[1].set_xticklabels(three_way_methods, rotation=20, ha='right')
+axes[1].set_ylabel('Macro F1'); axes[1].set_title('Macro F1')
+axes[1].set_ylim(0, 1); axes[1].legend(fontsize=8)
+
+plt.suptitle('All Neurons vs L4 vs L2/3 — Classification Performance', fontsize=13)
+plt.tight_layout()
+plt.savefig('fig_l23_vs_l4_vs_all.png', dpi=150); plt.show()
+
+
+=== CELL 80 (markdown) ===
+### L2/3 Summary
+
+=== CELL 81 (code) ===
+summary_l23_rows = []
+for name, emb in methods_l23:
+    summary_l23_rows.append({
+        'Method': name,
+        'Silhouette': f"{sil_scores_l23.get(name, float('nan')):.4f}",
+        'Std Accuracy': f"{clf_scores_l23.get(name, float('nan')):.4f}",
+        'Balanced Accuracy': f"{clf_scores_bal_l23.get(name, float('nan')):.4f}",
+        'Macro F1': f"{clf_scores_f1_l23.get(name, float('nan')):.4f}",
+    })
+
+print('L2/3 Results Summary')
+print(pd.DataFrame(summary_l23_rows).to_string(index=False))
+print(f'\nBaselines:')
+print(f'Always predict Clip (majority): {majority_frac_l23:.4f}')
+print(f'Uniform chance (balanced acc):  {chance_level:.4f}')
+print(f'\nIntrinsic dimensionality — L2/3:')
+print(f'PCs for 80% variance: {n80_l23}  (L4: {n80_l4}, all: {n80})')
+print(f'PCs for 90% variance: {n90_l23}  (L4: {n90_l4}, all: {n90})')
+print(f'Variance in PC1+PC2:  {cumvar_l23[1]*100:.2f}%  (L4: {cumvar_l4[1]*100:.2f}%, all: {cumvar[1]*100:.2f}%)')
+print(f'Participation ratio:  {pr_l23:.1f}  (L4: {pr_l4:.1f}, all: {participation_ratio:.1f})')
+print(f'\nL2/3 neurons used: {l23_mask_clean.sum()} of {trusted_meta_clean.shape[0]} total')
+
+
