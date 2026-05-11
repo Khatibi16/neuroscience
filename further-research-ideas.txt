@@ -1,7 +1,5 @@
 IDEAS FOR FURTHER RESEARCH
 
-- do same method for all neurons (not just proofread + tuned) and see if it's better
 - run pca etc for different layers. L4 is more significant so it could have better results
-- compare neuron activation across layers for different stimulus (clip should have more interesting stuff than trippy or monet2)
 - focus on neurons with correlated activation for same visual stimulus, check their location in the reduced dimension
 - try unsupervised learning (eg kmeans) on reduced dimension space
